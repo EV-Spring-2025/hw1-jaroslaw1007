@@ -32,6 +32,7 @@ if __name__ == "__main__":
     wandb.init(
         project="EV-HW1",
         config=OmegaConf.to_container(config, resolve=True),
+        name=config.exp_name,
     )
 
     trainer = Trainer(
@@ -44,7 +45,7 @@ if __name__ == "__main__":
         dssim_weight=config.dssim_weight,
         depth_weight=config.depth_weight,
         lr=config.lr,
-        results_folder=config.output_folder,
+        results_folder=os.path.join(config.output_folder, config.exp_name),
         render_kwargs={
             "tile_size": config.render.tile_size,
         },

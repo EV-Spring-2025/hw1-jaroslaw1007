@@ -168,14 +168,18 @@ class GaussRenderer(nn.Module):
                 in_mask = (over_br[0] > over_tl[0]) & (over_br[1] > over_tl[1])
                 if not in_mask.any():
                     continue
+
+                N = in_mask.sum()
                     
                 # TODO: Extract the pixel coordinates for this tile.
                 # Hint: The tile's pixel coordinates should be extracted using slicing and flattening.
                 # tile_coord = ...
+                tile_coord = self.pix_coord[h:h+self.tile_size, w:w+self.tile_size].reshape(-1, 2)
     
                 # TODO: Sort Gaussians by depth.
                 # Hint: Sorting should be based on the depth values of Gaussians.
                 # sorted_depths, index = ...
+                sorted_depths, index = torch.sort(depths[in_mask])
     
                 # TODO: Extract relevant Gaussian properties for the tile.
                 # Hint: Use the computed index to rearrange the following tensors.
@@ -184,32 +188,71 @@ class GaussRenderer(nn.Module):
                 # sorted_conic = ...
                 # sorted_opacity = ...
                 # sorted_color = ...
+                sorted_means2D = means2D[in_mask][index]
+                sorted_cov2d = cov2d[in_mask][index]
+                sorted_conic = sorted_cov2d.inverse()
+                sorted_opacity = opacity[in_mask][index]
+                sorted_color = color[in_mask][index]
     
                 # TODO: Compute the distance from each pixel in the tile to the Gaussian centers.
                 # Hint: This involves computing dx, dy between pixel coordinates and Gaussian centers.
                 # dx = ...
                 # dx_0, dx_1 = ...
+                dx = (tile_coord[:, None, :] - sorted_means2D[None, :])
+                dx_0 = dx[..., 0]
+                dx_1 = dx[..., 1]
     
                 # TODO: Compute the 2D Gaussian weight for each pixel.
                 # Hint: The weight is determined by the Mahalanobis distance using the covariance matrix.
                 # gauss_weight = ...
+                mahalanobis_dist = sorted_conic[:, 0, 0] * dx_0 ** 2 + sorted_conic[:, 1, 1] * dx_1 ** 2 + sorted_conic[:, 0, 1] * dx_0 * dx_1 + sorted_conic[:, 1, 0] * dx_0 * dx_1
+                gauss_weight = torch.exp(-0.5 * mahalanobis_dist)
+                
+                # cov_00 = sorted_cov2d[:, 0, 0]
+                # cov_01 = sorted_cov2d[:, 0, 1]
+                # cov_10 = sorted_cov2d[:, 1, 0]
+                # cov_11 = sorted_cov2d[:, 1, 1]
+
+                # inverse_det = 1.0 / (cov_00 * cov_11 - cov_10 * cov_01 + 1e-6)
+                # inverse_cov_00 = cov_11 * inverse_det
+                # inverse_cov_01 = -cov_01 * inverse_det
+                # inverse_cov_11 = cov_00 * inverse_det
+
+                # mahalanobis_dist = inverse_cov_00 * dx_0 ** 2 + 2 * inverse_cov_01 * dx_0 * dx_1 + inverse_cov_11 * dx_1 ** 2
+                # gauss_weight = torch.exp(-0.5 * mahalanobis_dist)
     
                 # TODO: Compute the alpha blending using transmittance (T).
                 # Hint: Ensure proper transparency blending by applying the alpha compositing formula.
                 # alpha = ...
                 # T = ...
                 # acc_alpha = ...
+                alpha = (gauss_weight[..., None] * sorted_opacity) #.clamp(max=0.99)
+                T = torch.cat([ torch.ones_like(alpha[:, :1]), 1 - alpha[:, :-1] ], dim=1).cumprod(dim=1)
+                acc_alpha = (alpha * T).sum(dim=1)
+
+                # alpha = sorted_opacity * gauss_weight 
+                # [1, 1-alpha_1, (1-alpha_1)(1-alpha_2), ...]
+                # T = torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1), device=alpha.device), 1.0 - alpha + 1e-6], dim=-1), dim=-1)[:, :-1]
+                # acc_alpha = (alpha * T).sum(dim=1, keepdim=True)
     
                 # TODO: Compute the color and depth contributions.
                 # Hint: Perform weighted summation using computed transmittance and opacity.
                 # tile_color = ...
                 # tile_depth = ...
+                tile_color = (T * alpha * sorted_color[None]).sum(dim=1)  + (1 - acc_alpha) * 1
+                tile_depth = ((T * alpha * sorted_depths[None, :, None])).sum(dim=1)
+
+                # tile_color = (sorted_color.unsqueeze(0) * (alpha * T).unsqueeze(-1)).sum(dim=1)
+                # tile_depth = (sorted_depths.unsqueeze(0) * (alpha * T)).sum(dim=1, keepdim=True)
     
                 # TODO: Store computed values into rendering buffers.
                 # Hint: Assign tile-wise computed values to corresponding locations in the full image buffers.
                 # self.render_color[h:h+self.tile_size, w:w+self.tile_size] = ...
                 # self.render_depth[h:h+self.tile_size, w:w+self.tile_size] = ...
                 # self.render_alpha[h:h+self.tile_size, w:w+self.tile_size] = ...
+                self.render_color[h:h+self.tile_size, w:w+self.tile_size] = tile_color.reshape(self.tile_size, self.tile_size, -1)
+                self.render_depth[h:h+self.tile_size, w:w+self.tile_size] = tile_depth.reshape(self.tile_size, self.tile_size, -1)
+                self.render_alpha[h:h+self.tile_size, w:w+self.tile_size] = acc_alpha.reshape(self.tile_size, self.tile_size, -1)
 
         return {
             "render": self.render_color,

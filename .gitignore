@@ -1,0 +1,13 @@
+# Ignore the dataset zip and extracted folder
+data.zip
+data/
+
+# Ignore output directories
+outputs_0408_0210/
+outputs_0408_0314/
+
+# Ignore Weights & Biases logs
+wandb/
+
+# Ignore Python cache
+**/__pycache__/

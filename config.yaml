@@ -1,12 +1,13 @@
 name: 3dgs
+exp_name: no_clamp99
 
 data_folder: data
 resize_scale: 0.5
 num_steps: 10000
 num_points: 16384  # 2 ** 14
 l1_weight: 0.8
-dssim_weight: 0.4
-depth_weight: 0.0
+dssim_weight: 0.2 # 0.4
+depth_weight: 0.1 # 0.2
 lr: 1e-3
 eval_interval: 500
 output_folder: outputs

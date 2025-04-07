@@ -26,20 +26,53 @@ def get_point_clouds(cameras, depths, alphas, rgbs=None):
     coords = []
     rgbas = []
 
+    bs, _, _ = depths.shape
+
     # TODO: Compute ray origins and directions for each pixel
     # Hint: You need to use the camera intrinsics (intrinsics) and extrinsics (c2ws)
     # to convert pixel coordinates into world-space rays.
     # rays_o, rays_d = ......
+    i_coords, j_coords = torch.meshgrid(
+        torch.arange(H, dtype=torch.float32, device=depths.device),
+        torch.arange(W, dtype=torch.float32, device=depths.device),
+        indexing='ij'
+    )  # (H, W)
+
+    pixels_homo = torch.stack([j_coords, i_coords, torch.ones_like(i_coords)], dim=-1)  # (H, W, 3)
+    pixels_homo = pixels_homo.view(-1, 3).T # (3, H*W)
+    pixels_homo = pixels_homo.unsqueeze(0).repeat(bs, 1, 1) # (N, 3, H*W)
+
+    inverse_intrinsics = torch.inverse(intrinsics[:, :3, :3]) # (N, 3, 3)
+
+    # cam_rays = torch.matmul(inverse_intrinsics, pixels_homo) # (N, 3, H*W)
+    # cam_rays = cam_rays.permute(0, 2, 1) # (N, H*W, 3)
+
+    rotation_matrices = c2ws[:, :3, :3] # (N, 3, 3)
+    translation_vectors = c2ws[:, :3, 3] # (N, 3)
+
+    rays_d = rotation_matrices.bmm(inverse_intrinsics).bmm(pixels_homo) # (N, 3, H*W)
+    rays_d = rays_d.transpose(1, 2) # (N, H*W, 3)
+
+    # rays_d = torch.matmul(cam_rays, rotation_matrices) # (B, H*W, 3)
+    rays_o = translation_vectors.unsqueeze(1).repeat(1, rays_d.shape[1], 1) # (N, H*W, 3)
 
     # TODO: Compute 3D world coordinates using depth values
     # Hint: Use the ray equation: P = O + D * depth
     # P: 3D point, O: ray origin, D: ray direction, depth: depth value
     # pts = ......
+    # pts = rays_o + rays_d * depths.unsqueeze(-1) # (N, H, W, 3)
+    pts = rays_o + rays_d * depths.flatten(1).unsqueeze(-1)
 
     # TODO: Apply the alpha mask to filter valid points
     # Hint: Mask should be applied to both coordinates and RGB values (if provided)
     # mask = ......
     # coords = pts[mask].cpu().numpy()
+    mask = (alphas.flatten(1) == 1)
+    coords = pts[mask].cpu().numpy()
+
+    if rgbs is not None:
+        rgbas = torch.cat([rgbs, alphas.unsqueeze(-1)], dim=-1) # (N, H, W, 4)
+        rgbas = rgbas.flatten(1, -2)[mask].cpu().numpy() # (N, 4)
 
     if rgbs is not None:
         channels = dict(
